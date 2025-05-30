@@ -1,0 +1,96 @@
+- name: Install Keycloak on Ubuntu
+  hosts: keycloak
+  become: true
+  vars:
+    keycloak_version: "26.2.5"
+    keycloak_user: "keycloak"
+    keycloak_base_dir: /opt
+    keycloak_install_dir: "{{ keycloak_base_dir }}/keycloak-{{ keycloak_version }}"
+    keycloak_admin_user: "admin"
+    keycloak_admin_pass: "supersecret"
+
+  tasks:
+    - name: Устанавливаем системные зависимости (JDK, unzip, curl)
+      apt:
+        name: [default-jdk, unzip, curl]
+        state: present
+        update_cache: yes
+
+    - name: Создаём системного пользователя для Keycloak
+      user:
+        name: "{{ keycloak_user }}"
+        shell: /usr/sbin/nologin
+        system: yes
+        create_home: no
+
+    - name: Загружаем архив Keycloak с GitHub
+      get_url:
+        url: "https://github.com/keycloak/keycloak/releases/download/{{ keycloak_version }}/keycloak-{{ keycloak_version }}.zip"
+        dest: "/tmp/keycloak-{{ keycloak_version }}.zip"
+        mode: '0644'
+
+    - name: Создаём целевую директорию установки
+      file:
+        path: "{{ keycloak_install_dir }}"
+        state: directory
+        owner: "{{ keycloak_user }}"
+        group: "{{ keycloak_user }}"
+        mode: '0755'
+
+    - name: Распаковываем архив Keycloak
+      unarchive:
+        src: "/tmp/keycloak-{{ keycloak_version }}.zip"
+        dest: "{{ keycloak_base_dir }}"
+        remote_src: yes
+
+    - name: Устанавливаем владельца файлов на пользователя keycloak
+      file:
+        path: "{{ keycloak_install_dir }}"
+        state: directory
+        recurse: yes
+        owner: "{{ keycloak_user }}"
+        group: "{{ keycloak_user }}"
+
+    - name: Собираем конфигурацию Keycloak (build)
+      shell: "sudo -u {{ keycloak_user }} {{ keycloak_install_dir }}/bin/kc.sh build"
+      args:
+        chdir: "{{ keycloak_install_dir }}"
+      become: false
+
+    - name: Создаём администратора Keycloak
+      shell: |
+        export KEYCLOAK_ADMIN={{ keycloak_admin_user }}
+        export KEYCLOAK_ADMIN_PASSWORD={{ keycloak_admin_pass }}
+        {{ keycloak_install_dir }}/bin/kc.sh build
+      args:
+        chdir: "{{ keycloak_install_dir }}"
+
+    - name: Создаём systemd-сервис для Keycloak
+      copy:
+        dest: /etc/systemd/system/keycloak.service
+        content: |
+          [Unit]
+          Description=Keycloak Server
+          After=network.target
+
+          [Service]
+          Type=simple
+          User={{ keycloak_user }}
+          Environment=KEYCLOAK_ADMIN={{ keycloak_admin_user }}
+          Environment=KEYCLOAK_ADMIN_PASSWORD={{ keycloak_admin_pass }}
+          ExecStart={{ keycloak_install_dir }}/bin/kc.sh start-dev
+          Restart=on-failure
+          LimitNOFILE=102642
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Перезагружаем systemd для регистрации сервиса
+      systemd:
+        daemon_reload: true
+
+    - name: Включаем и запускаем Keycloak как systemd-сервис
+      systemd:
+        name: keycloak
+        state: started
+        enabled: true
