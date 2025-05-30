@@ -25,7 +25,4 @@ systemd-сервис для автозапуска Keycloak
 
 Запустите playbook:
 
-bash
-Копировать
-Редактировать
 ansible-playbook -i inventory install_keycloak.yml
